@@ -1,0 +1,64 @@
+name: Update Cyprus data
+
+on:
+  schedule:
+    # Hourly, a few minutes past the hour when GitHub's scheduler is less busy.
+    - cron: "7 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: update-data
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get currently published data
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: published
+        continue-on-error: true  # the first run has nothing published yet
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pipeline/requirements.txt
+
+      - run: pip install -r pipeline/requirements.txt
+
+      - name: Build data
+        env:
+          COPERNICUSMARINE_SERVICE_USERNAME: ${{ secrets.COPERNICUSMARINE_SERVICE_USERNAME }}
+          COPERNICUSMARINE_SERVICE_PASSWORD: ${{ secrets.COPERNICUSMARINE_SERVICE_PASSWORD }}
+        run: |
+          mkdir -p site
+          if [ -d published ]; then cp -r published/. site/ && rm -rf site/.git; fi
+          cp site-template/* site/
+          touch site/.nojekyll
+          python pipeline/build.py --out site/cyprus
+
+      - name: Publish if anything changed
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          if [ -d published ] && diff -rq --exclude=.git published site > /dev/null; then
+            echo "No new data; nothing to publish."
+            exit 0
+          fi
+          # Publish as a single fresh commit so the branch doesn't grow with every update.
+          cd site
+          git init -q -b gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -qm "Update data $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push -qf "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
