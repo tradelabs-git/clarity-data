@@ -18,6 +18,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
+      - name: Keep the dive-reports database awake
+        # Supabase pauses free projects after a week without activity. Once a day, send an empty
+        # report: the database rejects it (nothing is saved) but counts it as activity.
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          if [ "$(date -u +%H)" = "03" ] || [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            curl -s -o /dev/null -w "Supabase answered HTTP %{http_code} (400 is expected)\n" \
+              -X POST "$SUPABASE_URL/rest/v1/dive_reports" \
+              -H "apikey: $SUPABASE_PUBLISHABLE_KEY" -H "Content-Type: application/json" -d '{}'
+          fi
+
       - uses: actions/checkout@v4
 
       - name: Get currently published data
